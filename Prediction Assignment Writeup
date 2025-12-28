@@ -1,0 +1,104 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Uttam Thummar"
+date: "12/9/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message = FALSE, warning = FALSE)
+```
+
+library(caret)
+library(gbm)  # For Gradient Boosted Machines (decision tree-based)
+library(dplyr)
+library(corrplot)  # For correlation analysis
+
+
+# Create data folder
+if(!file.exists("data")) dir.create("data")
+
+# Download files
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(train_url, "./data/pml-training.csv")
+download.file(test_url,  "./data/pml-testing.csv")
+
+# Load data (treat empty strings, #DIV/0!, and NA as NA)
+training <- read.csv("./data/pml-training.csv", na.strings = c("NA", "#DIV/0!", ""))
+testing  <- read.csv("./data/pml-testing.csv",  na.strings = c("NA", "#DIV/0!", ""))
+
+
+# Remove columns with >95% NA
+mostlyNA <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, mostlyNA == FALSE]
+testing  <- testing[, mostlyNA == FALSE]
+
+# Remove near-zero variance variables
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing  <- testing[, -nzv]
+
+# Remove identification columns (first 5 columns: timestamps, user names, etc.)
+training <- training[, -(1:5)]
+testing  <- testing[, -(1:5)]
+
+dim(training)  # Should be 19622 x 54
+
+
+
+# Select numeric variables (exclude classe)
+numeric_vars <- sapply(training, is.numeric)
+corr_matrix <- cor(training[, numeric_vars])
+
+# Plot correlation matrix (figure 1 of <5)
+corrplot(corr_matrix, method = "color", type = "lower", tl.cex = 0.4, tl.srt = 45,
+         title = "Correlation Matrix of Numeric Predictors", mar = c(0,0,1,0))
+         
+
+
+
+set.seed(12345)
+inTrain <- createDataPartition(training$classe, p = 0.7, list = FALSE)
+train_set <- training[inTrain, ]
+valid_set <- training[-inTrain, ]
+
+control <- trainControl(method = "repeatedcv", number = 3, repeats = 1, verboseIter = FALSE)
+
+model_gbm <- train(classe ~ ., 
+                   data = train_set, 
+                   method = "gbm", 
+                   trControl = control,
+                   verbose = FALSE)
+
+model_gbm
+
+
+pred_valid <- predict(model_gbm, valid_set)
+cm <- confusionMatrix(pred_valid, valid_set$classe)
+cm
+
+
+
+# Plot top 10 important variables (figure 2 of <5)
+varImp_gbm <- varImp(model_gbm)
+plot(varImp_gbm, top = 10, main = "Top 10 Important Variables in GBM")
+
+
+
+final_predictions <- predict(model_gbm, testing)
+final_predictions
+
+
+pml_write_files <- function(x) {
+  n <- length(x)
+  path <- "./predictions"
+  if(!file.exists(path)) dir.create(path)
+  for(i in 1:n){
+    filename <- paste0("problem_id_", i, ".txt")
+    write.table(x[i], file = file.path(path, filename), quote = FALSE, row.names = FALSE, col.names = FALSE)
+  }
+}
+
+pml_write_files(final_predictions)
